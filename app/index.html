@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prediction Engine</title><link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header><h1>Prediction Engine</h1></header>
+<main>
+<section class="toolbar" aria-label="Find a bet">
+<div class="search-wrap"><span class="search-icon" aria-hidden="true">⌕</span><input id="search" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions" autocomplete="off" placeholder="Search a bet, event or outcome…" aria-label="Search bets"><kbd>/</kbd><div id="suggestions" role="listbox" hidden></div></div>
+<button id="reset" title="Clear the selected bet" hidden>Reset</button>
+<button id="rescan" title="Refresh the market catalogue from both venues">Refresh catalogue</button>
+</section>
+<div class="statusline"><span id="catalogue">Loading market catalogue…</span><span id="request-status" role="status" aria-live="polite"></span></div>
+<div id="empty" class="empty"><h2>Find the bet. Compare the cost.</h2><p>Search a market to inspect both books, compare prices and see what remains after fees.</p><div id="starter" class="starter"></div></div>
+<div id="workspace" hidden>
+<section id="cards" class="cards" aria-label="Platform markets"></section>
+<section class="single-grid" aria-label="Single market arbitrage">
+<div class="panel"><div class="panel-head"><div><span class="eyebrow">SINGLE MARKET</span><h2><span class="kalshi">Kalshi</span> · Yes ask vs No ask</h2></div></div><div class="chart-bar"><div id="legend-kalshi" class="legend"></div><div id="live-kalshi" class="live"></div></div><div id="chart-kalshi" class="chart small" tabindex="0" aria-label="Kalshi single market history"></div><div class="chart-foot"><span id="note-kalshi"></span><span id="readout-kalshi" class="readout" aria-live="polite"></span></div></div>
+<div class="panel"><div class="panel-head"><div><span class="eyebrow">SINGLE MARKET</span><h2><span class="polymarket">Polymarket</span> · Yes ask vs No ask</h2></div></div><div class="chart-bar"><div id="legend-polymarket" class="legend"></div><div id="live-polymarket" class="live"></div></div><div id="chart-polymarket" class="chart small" tabindex="0" aria-label="Polymarket single market history"></div><div class="chart-foot"><span id="note-polymarket"></span><span id="readout-polymarket" class="readout" aria-live="polite"></span></div></div>
+</section>
+<section class="panel worksheet-panel">
+<div class="panel-head"><h2>Single market worksheet</h2><form id="cost-form"><button id="refresh" type="submit">Refresh books ↻</button></form></div>
+<div class="table-wrap"><table class="worksheet"><thead></thead><tbody id="rows-single"></tbody></table></div><p class="footnote">Kalshi rounds the fee on each order up to a whole cent. On one contract that can turn a small edge negative, while at 1,000 contracts the rounding is spread over every pair, so the two ROI columns can disagree.</p>
+</section>
+<section class="panel comparison">
+<div class="panel-head"><div><span class="eyebrow">CROSS-MARKET</span><h2>Kalshi vs Polymarket</h2></div><div class="tabs" role="group" aria-label="Chart view"><button id="history-tab" aria-pressed="true">Price history</button><button id="depth-tab" aria-pressed="false">Arbitrage at size</button></div></div>
+<div class="chart-bar"><div id="legend" class="legend"></div><div class="chart-options"><div id="live-cross" class="live"></div><select id="direction" aria-label="Arbitrage direction" hidden></select><select id="range" aria-label="History range"><option value="all">All history</option><option value="30">30 days</option><option value="7">7 days</option><option value="1">24 hours</option></select></div></div>
+<div id="chart" class="chart" tabindex="0" aria-label="Cross-market chart"></div><div class="chart-foot"><span id="chart-note"></span><span id="chart-readout" class="readout" aria-live="polite"></span></div>
+</section>
+<section class="panel worksheet-panel">
+<div class="panel-head"><h2>Cross-market worksheet</h2></div>
+<div class="table-wrap"><table class="worksheet"><thead></thead><tbody id="rows-cross"></tbody></table></div><p class="footnote">Kalshi rounds the fee on each order up to a whole cent. On one contract that can turn a small edge negative, while at 1,000 contracts the rounding is spread over every pair, so the two ROI columns can disagree.</p>
+</section>
+<section class="panel calculations">
+<div class="panel-head"><h2>How the numbers are calculated</h2><span class="muted">Click a route in either worksheet to follow its numbers.</span></div>
+<div class="derivation"><div><h3>Formulas</h3><ol id="formulas" class="formulas"></ol></div><div><h3 id="steps-title">Worked example</h3><p class="marker-key"><span class="fetched">Blue</span> numbers are fetched from Kalshi or Polymarket. Everything else is your input or calculated from them.</p><ol id="steps" class="formulas"></ol></div></div>
+</section>
+<div class="evidence-grid"><section class="panel"><h2 class="panel-title">Matching evidence <span id="match-state"></span></h2><div id="evidence"></div></section><section class="panel"><h2 class="panel-title">Settlement &amp; execution <span>Review required</span></h2><div id="caveats"></div><p class="footnote">Price agreement does not prove identical settlement. Check observation windows, sources, cancellations and outcome orientation. Snapshots are not simultaneous fills; event-end status and latency can invalidate an edge.</p></section></div>
+<section class="panel method"><h2 class="panel-title">Method <span>Ask-based · depth-aware · no double-counted spread</span></h2><p>Buying complementary outcomes pays $1 only when the contracts cover every settlement state. We walk both ask books to the same quantity, subtract venue fees, and limit size to the thinner book. Shared or mirrored liquidity is not added across routes.</p><p>The single market charts plot the Yes ask against $1 minus the No ask over the life of the bet. The fill is the net edge of buying both: green when Yes ask + No ask + fees stays below $1, red when it does not. Kalshi's asks come from its hourly or daily candles. Polymarket has no public ask history, so its path is the volume-weighted price takers paid for each token per hour, as Saguillo et al. do with trades, and the API only serves the latest 11,000 trades. A price is carried forward until the next one, for at most a day (two days for daily candles); after that the line breaks and there is no fill.</p><p>The cross-market price history applies the same test to one route at a time, following Cheng et al.: the Yes ask on one venue plus the No ask on the other. Arbitrage at size uses the live books instead of history.</p><p>Kelly sizing needs a defensible probability and loss model for execution failure, so the engine does not invent a Kelly stake. Mint-and-sell (bids above $1) and combinatorial strategies are outside this two-leg scanner. Fees follow the <a href="https://docs.polymarket.com/trading/fees" target="_blank" rel="noreferrer">Polymarket fee docs</a> and the <a href="https://kalshi.com/docs/kalshi-fee-schedule.pdf" target="_blank" rel="noreferrer">Kalshi fee schedule</a>.</p></section>
+</div>
+<section class="panel references"><h2 class="panel-title">Inspiration &amp; references</h2><p>This project started from two papers on arbitrage in prediction markets. Saguillo et al. measured how often Yes and No prices on Polymarket drift away from $1, and Gebele et al. showed that much of that edge disappears once you walk the real order book instead of trusting the top quote. I wanted to see whether the same holds for one bet listed on both Kalshi and Polymarket. The single market and cross-market conditions follow Cheng et al.</p><ol><li>Saguillo, O., Ghafouri, V., Kiffer, L. &amp; Suarez-Tangil, G. (2025). <em>Unravelling the Probabilistic Forest: Arbitrage in Prediction Markets.</em> arXiv:2508.03474. <a href="https://arxiv.org/abs/2508.03474" target="_blank" rel="noreferrer">arxiv.org/abs/2508.03474</a></li><li>Gebele, J., Mutzel, T. &amp; Matthes, F. (2026). <em>Executable Arbitrage and Market Efficiency in Prediction Markets.</em> arXiv:2608.00666. <a href="https://arxiv.org/abs/2608.00666" target="_blank" rel="noreferrer">arxiv.org/abs/2608.00666</a></li><li>Cheng, G., Yang, J. &amp; Zou, H. (2026). <em>Arbitrage Analysis in Polymarket NBA Markets.</em> arXiv:2605.00864. <a href="https://arxiv.org/abs/2605.00864" target="_blank" rel="noreferrer">arxiv.org/abs/2605.00864</a></li></ol></section>
+<footer>© 2026 Niclas Karlsen · <a href="https://github.com/karlsenniclas-ops" target="_blank" rel="noreferrer">GitHub</a> · <a href="https://www.linkedin.com/in/niclas-karlsen-831111262/" target="_blank" rel="noreferrer">LinkedIn</a></footer>
+</main>
+</body></html>
