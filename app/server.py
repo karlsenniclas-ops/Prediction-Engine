@@ -1,5 +1,6 @@
 import json
 import mimetypes
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -70,13 +71,14 @@ def handler(store):
 
 
 def serve(port=8765, open_browser=True):
-    store = Store(main.load() if Path(main.SCAN).exists() else None)
+    data = main.load() if Path(main.SCAN).exists() else None
+    store = Store(data)
     server = ThreadingHTTPServer(('127.0.0.1', port), handler(store))
     url = f'http://127.0.0.1:{server.server_port}'
     print(f'Prediction Engine · {url}', flush=True)
     if open_browser:
         webbrowser.open(url)
-    if not store.markets:
+    if not data or time.time() - data['time'] > main.SCAN_TTL:
         store.rescan()
     try:
         server.serve_forever()

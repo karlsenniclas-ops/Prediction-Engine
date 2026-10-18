@@ -10,6 +10,7 @@ from engine import matching, pricing
 from markets import kalshi, polymarket
 
 POOL = cf.ThreadPoolExecutor(8)
+HISTORY = cf.ThreadPoolExecutor(4)  # slow trade histories must not delay live books
 SIZE = 1000  # contracts behind the net total
 
 
@@ -28,8 +29,7 @@ class Store:
         self.lock = threading.Lock()
         self.scanning = False
         self.error = ''
-        self.data = data or dict(time=None, kalshi=[], polymarket=[], pairs=[])
-        self.install(self.data)
+        self.install(data or dict(time=None, kalshi=[], polymarket=[], pairs=[]))
 
     def install(self, data):
         markets = {(v, m['id']): m for v in ('kalshi', 'polymarket') for m in data[v]}
@@ -38,13 +38,14 @@ class Store:
             for v in ('kalshi', 'polymarket'):
                 partners.setdefault((v, q[v]), []).append(q)
         index = [(key, matching.plain(' '.join([m['title'], m['event'], m['outcome'], m['id']])),
-                  any(q.get('match') and q['match'].get('ok') for q in partners.get(key, [])),
+                  any(q.get('primary') for q in partners.get(key, [])),
                   matching.ts(m['close'])) for key, m in markets.items()]
         with self.lock:
-            self.data, self.markets, self.partners, self.index = data, markets, partners, index
+            self.state = data, markets, partners, index  # swapped as one so a rescan never mixes catalogues
 
     def status(self):
-        return dict(time=self.data['time'], count=len(self.markets), scanning=self.scanning, error=self.error)
+        data, markets, _, _ = self.state
+        return dict(time=data['time'], count=len(markets), scanning=self.scanning, error=self.error)
 
     def rescan(self):
         with self.lock:
@@ -61,21 +62,23 @@ class Store:
         threading.Thread(target=run, daemon=True).start()
 
     def search(self, query):
+        _, markets, _, index = self.state
         words = matching.plain(query).split()
         now, found = time.time(), []
-        for key, text, paired, close in self.index:
+        for key, text, paired, close in index:
             if all(w in text for w in words):
-                found.append((close <= now, not paired, -self.markets[key]['volume'], key))
-        return [dict(venue=key[0], id=key[1], title=self.markets[key]['title'], outcome=self.markets[key]['outcome'],
+                found.append((close <= now, not paired, -markets[key]['volume'], key))
+        return [dict(venue=key[0], id=key[1], title=markets[key]['title'], outcome=markets[key]['outcome'],
                      paired=not unpaired, volume=-volume, closed=closed)
                 for closed, unpaired, volume, key in sorted(found)[:16]]
 
     def selection(self, venue, ident):
+        _, markets, partners, _ = self.state
         other = 'polymarket' if venue == 'kalshi' else 'kalshi'
-        q = next((q for q in self.partners.get((venue, ident), []) if q.get('match') and q['match']['ok']), None)
-        selected = {venue: self.markets[(venue, ident)]}
+        q = next((q for q in partners.get((venue, ident), []) if q.get('primary')), None)
+        selected = {venue: markets[(venue, ident)]}
         if q:
-            selected[other] = self.markets[(other, q[other])]
+            selected[other] = markets[(other, q[other])]
         return selected, q
 
     def detail(self, venue, ident):
@@ -85,8 +88,9 @@ class Store:
         rows, curves = [], {}
 
         def add(key, label, a, b, y, no):
-            one, _ = evaluate(a, b, y, no, 1)
-            bulk, curves[key] = evaluate(a, b, y, no, SIZE)
+            one, bulk = evaluate(a, b, y, no, 1), evaluate(a, b, y, no, SIZE)
+            if '_' in key:
+                curves[key] = curve(a, b, y, no)
             rows.append(dict(one, key=key, label=label, bulk=bulk, status=bulk['status'], eligible=bulk['eligible'],
                              rates=[a['rate'], b['rate']], cents=[a['venue'] == 'kalshi', b['venue'] == 'kalshi'],
                              depth=[sum(q for _, q in a['book'][y]), sum(q for _, q in b['book'][no])]))
@@ -110,7 +114,7 @@ class Store:
 
     def histories(self, venue, ident):
         selected, pair = self.selection(venue, ident)
-        jobs = {v: POOL.submit(main.history if v == 'kalshi' else main.asks, m) for v, m in selected.items()}
+        jobs = {v: HISTORY.submit(main.history if v == 'kalshi' else main.asks, m) for v, m in selected.items()}
         ms = lambda t: int(t.timestamp() * 1000)
         single = {}
         for v, job in jobs.items():
@@ -142,23 +146,31 @@ def live(m):
     return dict(m, **s)
 
 
+def leg(m, side):
+    return dict(asks=m['book'][side], rate=m['rate'], cents=m['venue'] == 'kalshi')
+
+
 def evaluate(a, b, y, no, n):
-    ya = dict(asks=a['book'][y], rate=a['rate'], cents=a['venue'] == 'kalshi')
-    na = dict(asks=b['book'][no], rate=b['rate'], cents=b['venue'] == 'kalshi')
-    r = pricing.executable(ya, na, n)
+    r = pricing.executable(leg(a, y), leg(b, no), n)
+    # Polymarket's book timestamp is its last change, so freshness is judged on when the book was received
     valid = all(not m['error'] and m['active'] and m['latency'] <= 10 and
-                time.time() - (m['observed'] or 0) <= 15 and
-                (m['timestamp'] is None or 0 <= time.time() - m['timestamp'] <= 15) for m in (a, b))
+                time.time() - (m['observed'] or 0) <= 15 for m in (a, b))
     valid = valid and abs((a['observed'] or 0) - (b['observed'] or 0)) <= 3
     minimum = r['n'] > 0 and all(r['n'] >= m['minimum'] for m in (a, b))
     r['eligible'] = bool(valid and minimum and math.isfinite(r['edge']))
     r['status'] = ('Positive estimate' if r['edge'] > 0 else 'No net edge') if r['eligible'] else (
-        'No liquidity' if not r['n'] else 'Below venue minimum' if not minimum else 'Data / fees unverified')
+        'Data unavailable' if a['error'] or b['error'] else 'No liquidity' if not r['n']
+        else 'Below venue minimum' if not minimum else 'Data / fees unverified')
     r['labels'] = [a['venue'].title() + ' ' + a['sides'][0 if y == 'yes' else 1] + ' + fee',
                    '$1 − ' + b['venue'].title() + ' ' + b['sides'][0 if no == 'yes' else 1] + ' − fee']
-    curve = []
-    for size in sorted(set([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, n])):
-        point = pricing.executable(ya, na, size)
-        if point['n'] > 0 and (not curve or point['n'] != curve[-1][0]):
-            curve.append([point['n'], point['yes'] + point['fee_yes'], 1 - point['no'] - point['fee_no']])
-    return r, curve
+    return r
+
+
+def curve(a, b, y, no):
+    """Yes cost against $1 minus the No cost, for the arbitrage-at-size chart."""
+    out = []
+    for size in (1, 2, 5, 10, 20, 50, 100, 200, 500, SIZE):
+        p = pricing.executable(leg(a, y), leg(b, no), size)
+        if p['n'] > 0 and (not out or p['n'] != out[-1][0]):
+            out.append([p['n'], p['yes'] + p['fee_yes'], 1 - p['no'] - p['fee_no']])
+    return out

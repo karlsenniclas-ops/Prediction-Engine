@@ -31,7 +31,7 @@ DATE = re.compile(rf"\b(?:(?:{MONTHS})[a-z]*\.?\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?
 SEASON = re.compile(r"\b((?:19|20)\d{2})[-/]\d{2}\b")
 NUMBER = re.compile(r"\$?(\d[\d,]*\.?\d*)\s*(k|m|b|t|million|billion|trillion)?\b")
 UNIT = {"k": 1e3, "m": 1e6, "million": 1e6, "b": 1e9, "billion": 1e9, "t": 1e12, "trillion": 1e12}
-WORD = re.compile(r"#[\d.]+|[^\W\d_][^\W\d_']+")
+WORD = re.compile(r"#\d[\d.]*|[^\W\d_][^\W\d_']+")
 NEGATION = re.compile(r"\b(no|not|fail|fails|without|never)\b|n't\b")
 DIRECTION = {
     "above": r"\b(above|over|exceed|exceeds|higher|at least|or more|or higher|more than)\b",

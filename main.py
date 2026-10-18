@@ -1,12 +1,11 @@
-import argparse
 import concurrent.futures as cf
 import hashlib
 import json
 import os
+import threading
 import time
 
 import pandas as pd
-import requests
 
 from engine import matching
 from markets import kalshi, polymarket
@@ -17,6 +16,7 @@ HIST = os.path.join(CACHE, "history")
 SCAN = os.path.join(CACHE, "scan.json")
 MAX_CONFIRM = 6000     # candidate pairs sent to the data stage, highest volume first
 HIST_TTL = 6 * 3600
+SCAN_TTL = 24 * 3600   # an older catalogue is rescanned in the background at start
 
 
 def log(msg):
@@ -32,10 +32,14 @@ def cached(m, fetch, tag=""):
     else:
         try:
             h = fetch()
-        except (requests.RequestException, ValueError, KeyError):
+        except Exception:  # one market's history must not stop a scan
             return None
-        h.to_csv(path + ".part", index=False)
-        os.replace(path + ".part", path)
+        part = f"{path}.{threading.get_ident()}.part"
+        try:
+            h.to_csv(part, index=False)
+            os.replace(part, path)
+        except OSError:
+            pass  # another thread is writing the same file
     h["t"] = pd.to_datetime(h["t"], utc=True)
     return h
 
@@ -112,14 +116,5 @@ def load():
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--fresh", action="store_true", help="scan before opening")
-    ap.add_argument("--no-app", action="store_true", help="scan only")
-    ap.add_argument('--port', type=int, default=8765)
-    ap.add_argument('--no-browser', action='store_true')
-    args = ap.parse_args()
-    if args.fresh or args.no_app:
-        scan()
-    if not args.no_app:
-        from app.server import serve
-        serve(args.port, not args.no_browser)
+    from app.server import serve
+    serve()

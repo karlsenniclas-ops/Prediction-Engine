@@ -13,7 +13,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-The first time there is no market list yet, so it scans both sites in the background and that takes a while
+That is all. It opens the page in your browser, and when the market list is missing or more than a day old it scans both sites again in the background. The first scan takes a while. Stop it with Ctrl+C.
 
 ## What is in the folder
 
@@ -22,6 +22,7 @@ The first time there is no market list yet, so it scans both sites in the backgr
 - `engine/` matches the same bet across the two sites and does the pricing math
 - `app/` is the local web page and the small server behind it
 - `cache/` holds the market list and price history. You can delete it, but then the next start has to scan again.
+- `report/` is the write-up of the project and a test of the engine, as a PDF and the LaTeX source
 
 ## Using it
 

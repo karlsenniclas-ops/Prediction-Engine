@@ -1,11 +1,13 @@
 import concurrent.futures as cf
-import datetime as dt
 import json
 import math
 import time
 
 import pandas as pd
 import requests
+
+from engine.matching import ts
+from engine.pricing import levels
 
 GAMMA = "https://gamma-api.polymarket.com"
 DATA = "https://data-api.polymarket.com"
@@ -15,7 +17,7 @@ _http = requests.Session()
 
 def _call(method, url, **kw):
     """Backs off on 429 and on a dropped connection."""
-    for wait in (0.5, 1, 2):
+    for wait in (0.5, 1, 2, 4, 8):  # the scan fetches thousands of histories and hits rate limits
         try:
             r = _http.request(method, url, timeout=10, **kw)
         except (requests.ConnectionError, requests.Timeout):
@@ -33,13 +35,9 @@ def _json(method, url, **kw):
     return r.json()
 
 
-def ts(iso):
-    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
-
-
 def markets(min_volume=1000, log=print):
     """Markets taking orders, via /events by volume since only events carry tags; the offset stops at 2100."""
-    out, offset, now = [], 0, time.time()
+    out, seen, offset, now = [], set(), 0, time.time()
     while True:
         r = _call("GET", GAMMA + "/events", params=dict(active="true", closed="false", order="volume",
                                                        ascending="false", limit=100, offset=offset))
@@ -49,8 +47,9 @@ def markets(min_volume=1000, log=print):
         for e in r.json():
             for m in e.get("markets", []):
                 close = m.get("endDate") or e.get("endDate")
-                if not m.get("acceptingOrders") or (m.get("volumeNum") or 0) < min_volume or not m.get("clobTokenIds") or not close or ts(close) < now:
+                if not m.get("acceptingOrders") or (m.get("volumeNum") or 0) < min_volume or not m.get("clobTokenIds") or not close or ts(close) < now or m["slug"] in seen:
                     continue
+                seen.add(m["slug"])  # a market listed under two events would count twice in the matcher
                 ids = json.loads(m["clobTokenIds"])
                 if len(ids) != 2:
                     continue
@@ -58,7 +57,7 @@ def markets(min_volume=1000, log=print):
                 sides = tuple(json.loads(m.get("outcomes") or '["Yes", "No"]'))
                 out.append(dict(
                     venue="polymarket", id=m["slug"], yes=yes, no=no,
-                    event=e["title"], title=m["question"],
+                    event=e["title"], title=m.get("question") or e["title"],
                     outcome=m.get("groupItemTitle") or (sides[0] if sides[0] != "Yes" else ""),
                     open=m.get("startDate") or e.get("startDate") or m["createdAt"],
                     close=close,
@@ -81,7 +80,6 @@ def fee_rate(m):
 
 
 def snapshot(m):
-    from engine.pricing import levels
     meta = _json('GET', GAMMA + '/markets/slug/' + m['id'])
     raw = _json('POST', CLOB + '/books', json=[{'token_id': m['yes']}, {'token_id': m['no']}])
     by_id = {b['asset_id']: b for b in raw}
@@ -115,6 +113,6 @@ def asks(m):
     side = {m["yes"]: "yes", m["no"]: "no"}
     df = pd.DataFrame([(t["timestamp"], side[t["asset"]], float(t["price"]) * float(t["size"]), float(t["size"])) for t in trades
                        if t.get("side") == "BUY" and t.get("asset") in side], columns=["t", "side", "paid", "size"])
-    df["t"] = pd.to_datetime(df.t, unit="s", utc=True).dt.floor("h")
+    df["t"] = pd.to_datetime(df.t, unit="s", utc=True).dt.floor("h") + pd.Timedelta(hours=1)  # end of hour, like Kalshi's candles
     df = df.groupby(["side", "t"], as_index=False)[["paid", "size"]].sum()
     return df.assign(p=df.paid / df["size"])[["t", "side", "p"]]

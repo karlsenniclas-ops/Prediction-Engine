@@ -98,7 +98,7 @@ async function load(withHistory=false){
 function card(m,v){
   if(!m)return `<article class="market ${v}-card"><div class="card-head"><span class="venue-tag ${v}">${v}</span><span class="badge">Unpaired</span></div><h2>No matched counterpart</h2><p class="description">This bet has no matched market on the other venue.</p></article>`;
   const q=m.quotes, name=v==='kalshi'?'Kalshi':'Polymarket';
-  const state=m.error?'Cached quotes · '+m.error:!m.active?'Market inactive':m.timestamp && Date.now()/1000-m.timestamp>15?'Stale snapshot':'Book snapshot';
+  const state=m.error?'Cached quotes · '+m.error:!m.active?'Market inactive':'Book snapshot';
   return `<article class="market ${v}-card"><div class="card-head"><span class="venue-tag ${v}">${name}</span><span class="badge ${m.error?'warning':''}">${esc(state)}</span></div><h2>${esc(m.title)}</h2><div class="outcome">${esc(m.outcome||m.event)}</div><p class="description clamped" id="description-${v}">${esc(m.rules||'No settlement description supplied.')}</p><button class="read-more" data-description="${v}" aria-expanded="false" aria-controls="description-${v}">Read more…</button><div class="quotes">${[['yes_bid',m.sides[0]+' bid'],['yes_ask',m.sides[0]+' ask'],['no_bid',m.sides[1]+' bid'],['no_ask',m.sides[1]+' ask']].map(([key,label])=>`<div><span>${esc(label)}</span><strong>${cents(q[key])}</strong></div>`).join('')}</div><div class="card-meta"><span>Closes ${new Date(m.close).toLocaleDateString()}</span><span>Fee rate ${number(m.rate)?(m.rate*100).toFixed(1)+'%':'unknown'}</span><span>Depth ${m.book.yes.reduce((n,l)=>n+l[1],0).toLocaleString(undefined,{maximumFractionDigits:0})} / ${m.book.no.reduce((n,l)=>n+l[1],0).toLocaleString(undefined,{maximumFractionDigits:0})}</span></div></article>`;
 }
 $('cards').addEventListener('click',e=>{const b=e.target.closest('[data-description]');if(!b)return;const p=$('description-'+b.dataset.description);const collapsed=p.classList.toggle('clamped');b.textContent=collapsed?'Read more…':'Show less';b.setAttribute('aria-expanded',!collapsed);});
@@ -247,12 +247,12 @@ function live(){
 async function poll(){
   if(!selected||!detail||document.hidden||$('refresh').disabled)return;
   const seq=loadSeq;
-  try{const data=await api('/api/detail',selected);if(seq!==loadSeq)return;detail=data;render(false);$('request-status').textContent='Books received '+new Date(data.time*1000).toLocaleTimeString();}
-  catch(e){}
+  try{const data=await api('/api/detail',selected);if(seq!==loadSeq)return;detail=data;render(false);if(mode==='depth')draw();$('request-status').textContent='Books received '+new Date(data.time*1000).toLocaleTimeString();}
+  catch(e){if(seq===loadSeq)$('request-status').textContent='Refresh failed · books from '+new Date(detail.time*1000).toLocaleTimeString();}
 }
 setInterval(poll,60000);
 $('history-tab').onclick=()=>{mode='history';draw();};$('depth-tab').onclick=()=>{mode='depth';draw();};$('range').onchange=draw;$('direction').onchange=()=>{route=$('direction').value;rows();draw();};
-$('cost-form').onsubmit=e=>{e.preventDefault();load(!histories);};
+$('cost-form').onsubmit=e=>{e.preventDefault();load(!histories?.single);};
 window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(selected)draw();},120);});
 async function status(){
   try{

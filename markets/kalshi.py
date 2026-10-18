@@ -1,9 +1,10 @@
-import datetime as dt
 import math
 import time
 
 import pandas as pd
 import requests
+
+from engine.matching import ts
 
 BASE = "https://external-api.kalshi.com/trade-api/v2"
 _http = requests.Session()
@@ -12,7 +13,7 @@ _series = {}
 
 def get(path, **params):
     """Backs off on 429 and on a dropped connection."""
-    for wait in (0.5, 1, 2):
+    for wait in (0.5, 1, 2, 4, 8):  # the scan fetches thousands of histories and hits rate limits
         try:
             r = _http.get(BASE + path, params=params, timeout=10)
         except (requests.ConnectionError, requests.Timeout):
@@ -23,10 +24,6 @@ def get(path, **params):
             return r.json()
         time.sleep(wait)
     raise requests.ConnectionError(f"{path}: kept failing")
-
-
-def ts(iso):
-    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
 
 
 def markets(min_volume=1000, log=print):
@@ -41,7 +38,7 @@ def markets(min_volume=1000, log=print):
                     continue
                 out.append(dict(
                     venue="kalshi", id=m["ticker"], series=e["series_ticker"],
-                    event=e["title"], title=m["title"], outcome=m.get("yes_sub_title", ""),
+                    event=e["title"], title=m.get("title") or e["title"], outcome=m.get("yes_sub_title", ""),
                     open=m["open_time"], close=m["close_time"],
                     volume=float(m["volume_fp"]),
                     yes_bid=float(m["yes_bid_dollars"]), yes_ask=float(m["yes_ask_dollars"]),
